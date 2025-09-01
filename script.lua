@@ -234,15 +234,15 @@ RightGroupBox:AddButton({
 	Func = function()
 		Library:Notify("Speed hopping through servers...", 1)
 		spawnNow(function()
-			for i = 1, 5 do
+			for i = 1, 3 do
 				if not isScanning then
 					scanForRarities()
-					sleep(0.1)
+					sleep(0.5)
 					if not AutoServerHop then
 						break
 					end
 					joinDifferentServer()
-					sleep(2)
+					sleep(1) 
 				else
 					break
 				end
@@ -332,130 +332,83 @@ function joinDifferentServer()
 		local success, result = pcall(function()
 			local currentServerId = game.JobId
 			local attempts = 0
-			local maxAttempts = 10
+			local maxAttempts = 2
 
-			
 			while attempts < maxAttempts do
 				attempts = attempts + 1
 
-				local serverLists = {
-					"https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100",
-					"https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Desc&limit=100",
-					"https://games.roblox.com/v1/games/"
-						.. game.PlaceId
-						.. "/servers/Public?sortOrder=Random&limit=100",
-				}
+				local url = "https://games.roblox.com/v1/games/"
+					.. game.PlaceId
+					.. "/servers/Public?sortOrder=Desc&limit=100"
 
-				local allServers = {}
+				local ok, response = pcall(function()
+					return HttpService:JSONDecode(game:HttpGet(url))
+				end)
 
-				for _, url in ipairs(serverLists) do
-					local ok, response = pcall(function()
-						return HttpService:JSONDecode(game:HttpGet(url))
-					end)
+				if ok and response and response.data then
+					local validServers = {}
 
-					if ok and response and response.data then
-						for _, server in ipairs(response.data) do
-							
-							if server.id and server.id ~= currentServerId and server.playing < server.maxPlayers then
-								local exists = false
-								for _, existing in ipairs(allServers) do
-									if existing.id == server.id then
-										exists = true
-										break
-									end
-								end
-								if not exists then
-									table.insert(allServers, server)
-								end
+					for _, server in ipairs(response.data) do
+						if
+							server.id
+							and server.id ~= currentServerId
+							and server.playing < server.maxPlayers
+							and server.playing > 0
+						then
+							table.insert(validServers, server)
+						end
+					end
+
+					if #validServers > 0 then
+		
+						local unvisitedServers = {}
+						for _, server in ipairs(validServers) do
+							if not visitedServers[server.id] then
+								table.insert(unvisitedServers, server)
 							end
 						end
-					end
-					sleep(0.1)
-				end
 
-				local filteredServers = {}
-				for _, server in ipairs(allServers) do
-					if server.id ~= currentServerId then
-						table.insert(filteredServers, server)
-					end
-				end
-				allServers = filteredServers
-
-				if #allServers == 0 then
-					Library:Notify("No different servers found, attempt " .. attempts .. "/" .. maxAttempts, 1)
-					if attempts >= maxAttempts then
-						Library:Notify("Using fallback teleport method...", 1)
-						TeleportService:Teleport(game.PlaceId, Players.LocalPlayer)
-						return true
-					end
-					sleep(1) 
-				else
-					local unvisitedServers = {}
-					local visitedServers_available = {}
-
-					for _, server in ipairs(allServers) do
-						if not visitedServers[server.id] then
-							table.insert(unvisitedServers, server)
-						else
-							table.insert(visitedServers_available, server)
-						end
-					end
-
-					local targetServer = nil
-					if #unvisitedServers > 0 then
-						table.sort(unvisitedServers, function(a, b)
-							return (a.playing or 0) < (b.playing or 0)
-						end)
-						targetServer = unvisitedServers[1]
-						Library:Notify("Joining unvisited server (ID: " .. string.sub(targetServer.id, 1, 8) .. ")", 2)
-					elseif #visitedServers_available > 0 then
-						local filteredVisited = {}
-						for _, server in ipairs(visitedServers_available) do
-							if server.id ~= currentServerId then
-								table.insert(filteredVisited, server)
-							end
-						end
-						if #filteredVisited > 0 then
-							targetServer = filteredVisited[math.random(1, #filteredVisited)]
+						local targetServer = nil
+						if #unvisitedServers > 0 then
+	
+							targetServer = unvisitedServers[math.random(1, #unvisitedServers)]
 							Library:Notify(
-								"Rejoining different server (ID: " .. string.sub(targetServer.id, 1, 8) .. ")",
-								2
+								"Joining unvisited server (ID: " .. string.sub(targetServer.id, 1, 8) .. ")",
+								1
+							)
+						else
+
+							targetServer = validServers[math.random(1, #validServers)]
+							Library:Notify(
+								"Joining available server (ID: " .. string.sub(targetServer.id, 1, 8) .. ")",
+								1
 							)
 						end
-					end
 
-					if targetServer and targetServer.id ~= currentServerId then
+						if targetServer then
 
-						visitedServers[targetServer.id] = os.time()
-						saveVisitedServers()
+							visitedServers[targetServer.id] = os.time()
+							saveVisitedServers()
 
-						if targetServer.id == currentServerId then
-							Library:Notify("Safety check failed - server ID matches current, retrying...", 1)
-						else
-							Library:Notify(
-								"Teleporting to confirmed different server: " .. string.sub(targetServer.id, 1, 8),
-								2
-							)
 							TeleportService:TeleportToPlaceInstance(game.PlaceId, targetServer.id, Players.LocalPlayer)
-
-							sleep(2)
-							if game.JobId == currentServerId then
-								Library:Notify("Still in same server, retrying...", 1)
-							else
-								return true 
-							end
+							return true
 						end
 					end
+				end
+
+				if attempts < maxAttempts then
+					sleep(0.5)
 				end
 			end
 
 			
-			Library:Notify("All attempts failed, using fallback teleport", 1)
-			return false
+			Library:Notify("Using fallback teleport method...", 1)
+			TeleportService:Teleport(game.PlaceId, Players.LocalPlayer)
+			return true
 		end)
 
-		if not success or not result then
-			Library:Notify("Retrying with basic teleport...", 1)
+		if not success then
+			Library:Notify("Error occurred, using basic teleport...", 1)
 			TeleportService:Teleport(game.PlaceId, Players.LocalPlayer)
 		end
 	end)
