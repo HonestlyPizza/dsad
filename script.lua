@@ -331,84 +331,126 @@ function joinDifferentServer()
 	spawnNow(function()
 		local success, result = pcall(function()
 			local currentServerId = game.JobId
+			local attempts = 0
+			local maxAttempts = 10
 
-			local serverLists = {
-				"https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100",
-				"https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Desc&limit=100",
-				"https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Random&limit=100",
-			}
+			
+			while attempts < maxAttempts do
+				attempts = attempts + 1
 
-			local allServers = {}
+				local serverLists = {
+					"https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100",
+					"https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Desc&limit=100",
+					"https://games.roblox.com/v1/games/"
+						.. game.PlaceId
+						.. "/servers/Public?sortOrder=Random&limit=100",
+				}
 
-			for _, url in ipairs(serverLists) do
-				local ok, response = pcall(function()
-					return HttpService:JSONDecode(game:HttpGet(url))
-				end)
+				local allServers = {}
 
-				if ok and response and response.data then
-					for _, server in ipairs(response.data) do
-						if server.id ~= currentServerId and server.playing < server.maxPlayers then
-							local exists = false
-							for _, existing in ipairs(allServers) do
-								if existing.id == server.id then
-									exists = true
-									break
+				for _, url in ipairs(serverLists) do
+					local ok, response = pcall(function()
+						return HttpService:JSONDecode(game:HttpGet(url))
+					end)
+
+					if ok and response and response.data then
+						for _, server in ipairs(response.data) do
+							
+							if server.id and server.id ~= currentServerId and server.playing < server.maxPlayers then
+								local exists = false
+								for _, existing in ipairs(allServers) do
+									if existing.id == server.id then
+										exists = true
+										break
+									end
+								end
+								if not exists then
+									table.insert(allServers, server)
 								end
 							end
-							if not exists then
-								table.insert(allServers, server)
+						end
+					end
+					sleep(0.1)
+				end
+
+				local filteredServers = {}
+				for _, server in ipairs(allServers) do
+					if server.id ~= currentServerId then
+						table.insert(filteredServers, server)
+					end
+				end
+				allServers = filteredServers
+
+				if #allServers == 0 then
+					Library:Notify("No different servers found, attempt " .. attempts .. "/" .. maxAttempts, 1)
+					if attempts >= maxAttempts then
+						Library:Notify("Using fallback teleport method...", 1)
+						TeleportService:Teleport(game.PlaceId, Players.LocalPlayer)
+						return true
+					end
+					sleep(1) 
+				else
+					local unvisitedServers = {}
+					local visitedServers_available = {}
+
+					for _, server in ipairs(allServers) do
+						if not visitedServers[server.id] then
+							table.insert(unvisitedServers, server)
+						else
+							table.insert(visitedServers_available, server)
+						end
+					end
+
+					local targetServer = nil
+					if #unvisitedServers > 0 then
+						table.sort(unvisitedServers, function(a, b)
+							return (a.playing or 0) < (b.playing or 0)
+						end)
+						targetServer = unvisitedServers[1]
+						Library:Notify("Joining unvisited server (ID: " .. string.sub(targetServer.id, 1, 8) .. ")", 2)
+					elseif #visitedServers_available > 0 then
+						local filteredVisited = {}
+						for _, server in ipairs(visitedServers_available) do
+							if server.id ~= currentServerId then
+								table.insert(filteredVisited, server)
+							end
+						end
+						if #filteredVisited > 0 then
+							targetServer = filteredVisited[math.random(1, #filteredVisited)]
+							Library:Notify(
+								"Rejoining different server (ID: " .. string.sub(targetServer.id, 1, 8) .. ")",
+								2
+							)
+						end
+					end
+
+					if targetServer and targetServer.id ~= currentServerId then
+
+						visitedServers[targetServer.id] = os.time()
+						saveVisitedServers()
+
+						if targetServer.id == currentServerId then
+							Library:Notify("Safety check failed - server ID matches current, retrying...", 1)
+						else
+							Library:Notify(
+								"Teleporting to confirmed different server: " .. string.sub(targetServer.id, 1, 8),
+								2
+							)
+							TeleportService:TeleportToPlaceInstance(game.PlaceId, targetServer.id, Players.LocalPlayer)
+
+							sleep(2)
+							if game.JobId == currentServerId then
+								Library:Notify("Still in same server, retrying...", 1)
+							else
+								return true 
 							end
 						end
 					end
 				end
-				sleep(0.1)
 			end
 
-			if #allServers == 0 then
-				Library:Notify("Using fallback teleport method...", 1)
-				TeleportService:Teleport(game.PlaceId, Players.LocalPlayer)
-				return true
-			end
-
-			local unvisitedServers = {}
-			local visitedServers_available = {}
-
-			for _, server in ipairs(allServers) do
-				if not visitedServers[server.id] then
-					table.insert(unvisitedServers, server)
-				else
-					table.insert(visitedServers_available, server)
-				end
-			end
-
-			local targetServer = nil
-if #unvisitedServers > 0 then
-    table.sort(unvisitedServers, function(a, b)
-        return (a.playing or 0) < (b.playing or 0)
-    end)
-    targetServer = unvisitedServers[1]
-elseif #visitedServers_available > 0 then
-
-    local filteredVisited = {}
-    for _, server in ipairs(visitedServers_available) do
-        if server.id ~= game.JobId then
-            table.insert(filteredVisited, server)
-        end
-    end
-    if #filteredVisited > 0 then
-        targetServer = filteredVisited[math.random(1, #filteredVisited)]
-    end
-end
-
-
-			if targetServer then
-				visitedServers[targetServer.id] = os.time()
-				saveVisitedServers()
-
-				TeleportService:TeleportToPlaceInstance(game.PlaceId, targetServer.id, Players.LocalPlayer)
-				return true
-			end
-
+			
+			Library:Notify("All attempts failed, using fallback teleport", 1)
 			return false
 		end)
 
@@ -448,66 +490,71 @@ function scanForRarities()
 							local animalOverhead = attachment:FindFirstChild("AnimalOverhead")
 							if animalOverhead then
 								local rarity = animalOverhead:FindFirstChild("Rarity")
-								if rarity and rarity:IsA("TextLabel") then
-									foundAnyRarity = true
-									local rarityText = rarity.Text
+								local stolen = animalOverhead:FindFirstChild("Stolen")
 
-									if not raritiesFound[rarityText] then
-										raritiesFound[rarityText] = 0
-									end
-									raritiesFound[rarityText] = raritiesFound[rarityText] + 1
+								if stolen and stolen:IsA("TextLabel") and stolen.Text == "IN MACHINE" then
+								else
+									if rarity and rarity:IsA("TextLabel") then
+										foundAnyRarity = true
+										local rarityText = rarity.Text
 
-									if rarityText == TargetRarity then
-										foundTargetRarity = true
+										if not raritiesFound[rarityText] then
+											raritiesFound[rarityText] = 0
+										end
+										raritiesFound[rarityText] = raritiesFound[rarityText] + 1
 
-										if ESPEnabled then
-											local bikeModel = slot
-											if bikeModel and bikeModel:IsA("Model") then
-												local highlight = Instance.new("Highlight")
-												highlight.Name = "RarityESP"
-												highlight.FillColor = Color3.fromRGB(0, 255, 0)
-												highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-												highlight.FillTransparency = 0.3
-												highlight.OutlineTransparency = 0
-												highlight.Adornee = bikeModel
-												highlight.Parent = bikeModel
-												table.insert(highlights, highlight)
+										if rarityText == TargetRarity then
+											foundTargetRarity = true
 
-												local billboardGui = Instance.new("BillboardGui")
-												billboardGui.Name = "RarityESPText"
-												billboardGui.Size = UDim2.new(0, 200, 0, 100)
-												billboardGui.StudsOffset = Vector3.new(0, 5, 0)
-												billboardGui.Adornee = bikeModel
-												billboardGui.Parent = bikeModel
+											if ESPEnabled then
+												local bikeModel = slot
+												if bikeModel and bikeModel:IsA("Model") then
+													local highlight = Instance.new("Highlight")
+													highlight.Name = "RarityESP"
+													highlight.FillColor = Color3.fromRGB(0, 255, 0)
+													highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+													highlight.FillTransparency = 0.3
+													highlight.OutlineTransparency = 0
+													highlight.Adornee = bikeModel
+													highlight.Parent = bikeModel
+													table.insert(highlights, highlight)
 
-												local textLabel = Instance.new("TextLabel")
-												textLabel.Size = UDim2.new(1, 0, 1, 0)
-												textLabel.BackgroundTransparency = 0.2
-												textLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-												textLabel.BorderSizePixel = 0
-												textLabel.Text = rarityText .. " FOUND!"
-												textLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
-												textLabel.TextScaled = true
-												textLabel.TextStrokeTransparency = 0
-												textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-												textLabel.Font = Enum.Font.GothamBold
-												textLabel.Parent = billboardGui
+													local billboardGui = Instance.new("BillboardGui")
+													billboardGui.Name = "RarityESPText"
+													billboardGui.Size = UDim2.new(0, 200, 0, 100)
+													billboardGui.StudsOffset = Vector3.new(0, 5, 0)
+													billboardGui.Adornee = bikeModel
+													billboardGui.Parent = bikeModel
 
-												local tween = game:GetService("TweenService"):Create(
-													textLabel,
-													TweenInfo.new(
-														0.8,
-														Enum.EasingStyle.Sine,
-														Enum.EasingDirection.InOut,
-														-1,
-														true
-													),
-													{ TextTransparency = 0.3 }
-												)
-												tween:Play()
+													local textLabel = Instance.new("TextLabel")
+													textLabel.Size = UDim2.new(1, 0, 1, 0)
+													textLabel.BackgroundTransparency = 0.2
+													textLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+													textLabel.BorderSizePixel = 0
+													textLabel.Text = rarityText .. " FOUND!"
+													textLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
+													textLabel.TextScaled = true
+													textLabel.TextStrokeTransparency = 0
+													textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+													textLabel.Font = Enum.Font.GothamBold
+													textLabel.Parent = billboardGui
 
-												table.insert(highlights, billboardGui)
-												table.insert(highlights, tween)
+													local tween = game:GetService("TweenService"):Create(
+														textLabel,
+														TweenInfo.new(
+															0.8,
+															Enum.EasingStyle.Sine,
+															Enum.EasingDirection.InOut,
+															-1,
+															true
+														),
+														{ TextTransparency = 0.3 }
+													)
+													tween:Play()
+
+													table.insert(highlights, billboardGui)
+													table.insert(highlights, tween)
+												end
 											end
 										end
 									end
