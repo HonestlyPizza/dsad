@@ -4,6 +4,13 @@ local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
 
+local spawnNow = (task and task.spawn) or function(fn)
+	return spawn(fn)
+end
+local sleep = (task and task.wait) or function(t)
+	return wait(t)
+end
+
 local CONFIG_FILE = "BROTConfig.json"
 local VISITED_SERVERS_FILE = "VisitedServers.json"
 
@@ -107,10 +114,10 @@ local Library = loadstring(libraryLoad)()
 local ThemeManager = loadstring(themeLoad)()
 local SaveManager = loadstring(saveLoad)()
 
-local TargetRarity = config.targetRarity or "Secret"
-local AutoServerHop = config.autoServerHop or true
-local ESPEnabled = config.espEnabled or true
-local AutoScanOnJoin = config.autoScanOnJoin or true
+local TargetRarity = config.targetRarity or defaultConfig.targetRarity
+local AutoServerHop = (config.autoServerHop ~= nil) and config.autoServerHop or defaultConfig.autoServerHop
+local ESPEnabled = (config.espEnabled ~= nil) and config.espEnabled or defaultConfig.espEnabled
+local AutoScanOnJoin = (config.autoScanOnJoin ~= nil) and config.autoScanOnJoin or defaultConfig.autoScanOnJoin
 local highlights = {}
 local isScanning = false
 
@@ -226,16 +233,16 @@ RightGroupBox:AddButton({
 	Text = "Speed Hop Mode",
 	Func = function()
 		Library:Notify("Speed hopping through servers...", 1)
-		spawn(function()
+		spawnNow(function()
 			for i = 1, 5 do
 				if not isScanning then
 					scanForRarities()
-					wait(0.1)
+					sleep(0.1)
 					if not AutoServerHop then
 						break
 					end
 					joinDifferentServer()
-					wait(2)
+					sleep(2)
 				else
 					break
 				end
@@ -303,9 +310,19 @@ SettingsGroupBox:AddButton({
 })
 
 function clearHighlights()
-	for _, highlight in pairs(highlights) do
-		if highlight and highlight.Parent then
-			highlight:Destroy()
+	for _, item in pairs(highlights) do
+		if item then
+			
+			if typeof(item) == "Instance" and item.ClassName == "Tween" then
+				item:Cancel()
+				item:Destroy()
+
+			elseif typeof(item) == "Instance" and item.Parent then
+				item:Destroy()
+
+			elseif item.Destroy then
+				item:Destroy()
+			end
 		end
 	end
 	highlights = {}
@@ -314,74 +331,97 @@ end
 function joinDifferentServer()
 	Library:Notify("Server Hopping - Finding new server...", 1)
 
-	spawn(function()
-		local success, result = pcall(function()
+	local function shuffle(t)
+		for i = #t, 2, -1 do
+			local j = math.random(i)
+			t[i], t[j] = t[j], t[i]
+		end
+	end
+
+	spawnNow(function()
+		local function findTarget()
 			local currentServerId = game.JobId
 
-			-- Get multiple pages of servers for better selection
-			local allAvailableServers = {}
-			for page = 1, 3 do
-				local cursor = ""
-				if page > 1 then
-					cursor = "&cursor=" .. tostring((page - 1) * 100)
-				end
+			local collected = {}
+			local cursor = nil
+			local pages = 0
+			repeat
+				local url = "https://games.roblox.com/v1/games/"
+					.. game.PlaceId
+					.. "/servers/Public?sortOrder=Asc&limit=100"
+					.. (cursor and ("&cursor=" .. cursor) or "")
 
-				local pageServers = HttpService:JSONDecode(
-					game:HttpGet(
-						"https://games.roblox.com/v1/games/"
-							.. game.PlaceId
-							.. "/servers/Public?sortOrder=Desc&limit=100"
-							.. cursor
-					)
-				)
-
-				for _, server in pairs(pageServers.data) do
-					if server.id ~= currentServerId and server.playing < server.maxPlayers and server.playing > 3 then
-						table.insert(allAvailableServers, server)
+				local ok, response = pcall(function()
+					return HttpService:JSONDecode(game:HttpGet(url))
+				end)
+				if ok and response and response.data then
+					for _, server in ipairs(response.data) do
+						if
+							server.id ~= currentServerId
+							and not server.vipServerId
+							and server.playing < server.maxPlayers
+							and server.playing >= 0
+						then
+							table.insert(collected, server)
+						end
 					end
+					cursor = response.nextPageCursor
+				else
+					cursor = nil
 				end
+				pages = pages + 1
+			until not cursor or pages >= 8
+
+			if #collected == 0 then
+				return nil
 			end
 
-			-- Filter out visited servers
-			local unvisitedServers = {}
-			for _, server in pairs(allAvailableServers) do
+			table.sort(collected, function(a, b)
+				return (a.playing or 0) < (b.playing or 0)
+			end)
+
+			local unvisited = {}
+			for _, server in ipairs(collected) do
 				if not visitedServers[server.id] then
-					table.insert(unvisitedServers, server)
+					table.insert(unvisited, server)
 				end
 			end
 
-			local targetServer = nil
+			if #unvisited > 0 then
+				return unvisited[1], true
+			else
+				return collected[1], false
+			end
+		end
 
-			-- Try unvisited servers first
-			if #unvisitedServers > 0 then
-				targetServer = unvisitedServers[math.random(1, #unvisitedServers)]
-				Library:Notify("Joining unvisited server (ID: " .. string.sub(targetServer.id, 1, 8) .. "...)", 2)
-			-- If no unvisited servers, clear history and pick any different server
-			elseif #allAvailableServers > 0 then
-				visitedServers = {}
+		local baseJob = game.JobId
+		local tried = {}
+		for attempt = 1, 6 do
+			local target, isUnvisited = findTarget()
+			if not target then
+				break
+			end
+			if not tried[target.id] then
+				tried[target.id] = true
+				visitedServers[target.id] = os.time()
 				saveVisitedServers()
-				targetServer = allAvailableServers[math.random(1, #allAvailableServers)]
 				Library:Notify(
-					"History cleared - Joining server (ID: " .. string.sub(targetServer.id, 1, 8) .. "...)",
+					(isUnvisited and "Joining unvisited " or "Joining different ") .. string.sub(target.id, 1, 8),
 					2
 				)
+				TeleportService:TeleportToPlaceInstance(game.PlaceId, target.id, Players.LocalPlayer)
+				local t0 = os.clock()
+				while os.clock() - t0 < 3 do
+					if game.JobId ~= baseJob then
+						return
+					end
+					sleep(0.2)
+				end
 			end
-
-			if targetServer then
-				-- Add to visited list before teleporting
-				visitedServers[targetServer.id] = os.time()
-				saveVisitedServers()
-				TeleportService:TeleportToPlaceInstance(game.PlaceId, targetServer.id, Players.LocalPlayer)
-				return true
-			end
-
-			return false
-		end)
-
-		if not success or not result then
-			Library:Notify("Fallback: Random server teleport", 1)
-			TeleportService:Teleport(game.PlaceId, Players.LocalPlayer)
+			sleep(0.5)
 		end
+
+		Library:Notify("No different public servers found right now.", 2)
 	end)
 end
 
@@ -429,13 +469,52 @@ function scanForRarities()
 										if ESPEnabled then
 											local bikeModel = slot
 											if bikeModel and bikeModel:IsA("Model") then
+				
 												local highlight = Instance.new("Highlight")
 												highlight.Name = "RarityESP"
-												highlight.FillColor = Color3.fromRGB(255, 255, 0)
-												highlight.OutlineColor = Color3.fromRGB(0, 0, 0)
+												highlight.FillColor = Color3.fromRGB(0, 255, 0)
+												highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+												highlight.FillTransparency = 0.3
+												highlight.OutlineTransparency = 0
 												highlight.Adornee = bikeModel
 												highlight.Parent = bikeModel
 												table.insert(highlights, highlight)
+
+												local billboardGui = Instance.new("BillboardGui")
+												billboardGui.Name = "RarityESPText"
+												billboardGui.Size = UDim2.new(0, 200, 0, 100)
+												billboardGui.StudsOffset = Vector3.new(0, 5, 0)
+												billboardGui.Adornee = bikeModel
+												billboardGui.Parent = bikeModel
+
+												local textLabel = Instance.new("TextLabel")
+												textLabel.Size = UDim2.new(1, 0, 1, 0)
+												textLabel.BackgroundTransparency = 0.2
+												textLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+												textLabel.BorderSizePixel = 0
+												textLabel.Text =  rarityText .. " FOUND!"
+												textLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
+												textLabel.TextScaled = true
+												textLabel.TextStrokeTransparency = 0
+												textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+												textLabel.Font = Enum.Font.GothamBold
+												textLabel.Parent = billboardGui
+
+												local tween = game:GetService("TweenService"):Create(
+													textLabel,
+													TweenInfo.new(
+														0.8,
+														Enum.EasingStyle.Sine,
+														Enum.EasingDirection.InOut,
+														-1,
+														true
+													),
+													{ TextTransparency = 0.3 }
+												)
+												tween:Play()
+
+												table.insert(highlights, billboardGui)
+												table.insert(highlights, tween)
 											end
 										end
 									end
@@ -489,8 +568,8 @@ SaveManager:SetIgnoreIndexes({})
 SaveManager:LoadAutoloadConfig()
 
 if AutoScanOnJoin then
-	spawn(function()
-		wait(0.5)
+	spawnNow(function()
+		sleep(0.5)
 		scanForRarities()
 	end)
 end
