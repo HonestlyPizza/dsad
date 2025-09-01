@@ -122,7 +122,7 @@ local highlights = {}
 local isScanning = false
 
 local Window = Library:CreateWindow({
-	Title = "Maddog & Thunder Hub",
+	Title = "Maaddog & Thunder Hub",
 	Center = true,
 	AutoShow = true,
 	TabPadding = 8,
