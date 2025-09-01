@@ -1,71 +1,18 @@
+
 local Workspace = game:GetService("Workspace")
 local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
-local RunService = game:GetService("RunService")
 
-local spawnNow = (task and task.spawn) or function(fn)
-	return spawn(fn)
-end
-local sleep = (task and task.wait) or function(t)
-	return wait(t)
-end
-
-local CONFIG_FILE = "BROTConfig.json"
-local VISITED_SERVERS_FILE = "VisitedServers.json"
+local CONFIG_FILE = "BrainrotRarityConfig.json"
 
 local defaultConfig = {
 	enabled = true,
 	targetRarity = "Secret",
-	autoServerHop = false,
+	autoServerHop = true,
 	espEnabled = true,
 	autoScanOnJoin = true,
 }
-
-local visitedServers = {}
-
-local function loadVisitedServers()
-	local success, result = pcall(function()
-		if readfile and isfile and isfile(VISITED_SERVERS_FILE) then
-			return HttpService:JSONDecode(readfile(VISITED_SERVERS_FILE))
-		end
-		return {}
-	end)
-	return success and result or {}
-end
-
-local function saveVisitedServers()
-	pcall(function()
-		if writefile then
-			writefile(VISITED_SERVERS_FILE, HttpService:JSONEncode(visitedServers))
-		end
-	end)
-end
-
-local function addCurrentServer()
-	local currentServerId = game.JobId
-	if currentServerId and currentServerId ~= "" then
-		visitedServers[currentServerId] = os.time()
-		local count = 0
-		for _ in pairs(visitedServers) do
-			count = count + 1
-		end
-		if count > 50 then
-			local serverList = {}
-			for serverId, timestamp in pairs(visitedServers) do
-				table.insert(serverList, { id = serverId, time = timestamp })
-			end
-			table.sort(serverList, function(a, b)
-				return a.time < b.time
-			end)
-			visitedServers = {}
-			for i = math.max(1, #serverList - 25), #serverList do
-				visitedServers[serverList[i].id] = serverList[i].time
-			end
-		end
-		saveVisitedServers()
-	end
-end
 
 local function loadConfig()
 	local success, result = pcall(function()
@@ -91,81 +38,82 @@ local function saveConfig(config)
 	end)
 end
 
-visitedServers = loadVisitedServers()
-addCurrentServer()
-
 local config = loadConfig()
 
 if not config.enabled then
-	print("Brainrot Rarity Script is DISABLED via config file.")
 	print("To enable, set 'enabled' to true in " .. CONFIG_FILE)
 	return
 end
 
-print("Brainrot Rarity Script is ENABLED - Loading LinoriaLib UI...")
+print("Brainrot Rarity Script is ENABLED - Loading UI...")
 
-local repo = "https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/"
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 
-local libraryLoad = game:HttpGetAsync(repo .. "Library.lua")
-local themeLoad = game:HttpGetAsync(repo .. "addons/ThemeManager.lua")
-local saveLoad = game:HttpGetAsync(repo .. "addons/SaveManager.lua")
-
-local Library = loadstring(libraryLoad)()
-local ThemeManager = loadstring(themeLoad)()
-local SaveManager = loadstring(saveLoad)()
-
-local TargetRarity = config.targetRarity or defaultConfig.targetRarity
-local AutoServerHop = (config.autoServerHop ~= nil) and config.autoServerHop or defaultConfig.autoServerHop
-local ESPEnabled = (config.espEnabled ~= nil) and config.espEnabled or defaultConfig.espEnabled
-local AutoScanOnJoin = (config.autoScanOnJoin ~= nil) and config.autoScanOnJoin or defaultConfig.autoScanOnJoin
+local TargetRarity = config.targetRarity or "Secret"
+local AutoServerHop = config.autoServerHop or true
+local ESPEnabled = config.espEnabled or true
+local AutoScanOnJoin = config.autoScanOnJoin or true
 local highlights = {}
 local isScanning = false
 
-local Window = Library:CreateWindow({
-	Title = "Maaddog & Thunder Hub",
-	Center = true,
-	AutoShow = true,
-	TabPadding = 8,
-	MenuFadeTime = 0.2,
+local Window = Rayfield:CreateWindow({
+	Name = "Maddog & Thunder Hub",
+	LoadingTitle = "Maddog & Thunder Hub",
+	LoadingSubtitle = "by Thunder",
+	ConfigurationSaving = {
+		Enabled = false,
+		FolderName = nil,
+		FileName = nil,
+	},
+	Discord = {
+		Enabled = false,
+		Invite = "noinvitelink",
+		RememberJoins = true,
+	},
+	KeySystem = false,
 })
 
-local Tabs = {
-	Main = Window:AddTab("Main"),
-	Settings = Window:AddTab("Settings"),
-}
+local MainTab = Window:CreateTab("Main", 4483362458)
 
-local LeftGroupBox = Tabs.Main:AddLeftGroupbox("Configuration")
+local ConfigSection = MainTab:CreateSection("Configuration")
 
-LeftGroupBox:AddToggle("ScriptEnabled", {
-	Text = "Script Enabled",
-	Default = config.enabled,
-	Tooltip = "Enable/disable the script functionality",
+local EnabledToggle = MainTab:CreateToggle({
+	Name = "Script Enabled",
+	CurrentValue = config.enabled,
+	Flag = "ScriptEnabled",
 	Callback = function(Value)
 		config.enabled = Value
 		saveConfig(config)
 		if not Value then
-			Library:Notify("Script Disabled - Will not run on next join", 3)
+			Rayfield:Notify({
+				Title = "Script Disabled",
+				Content = "Script will not run on next join",
+				Duration = 3,
+				Image = 4483362458,
+			})
 		end
 	end,
 })
 
-LeftGroupBox:AddDropdown("TargetRarity", {
-	Values = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythical", "Secret" },
-	Default = TargetRarity,
-	Multi = false,
-	Text = "Target Rarity",
-	Tooltip = "Select the rarity to hunt for",
-	Callback = function(Value)
-		TargetRarity = Value
+local RaritySection = MainTab:CreateSection("Rarity Settings")
+
+local RarityDropdown = MainTab:CreateDropdown({
+	Name = "Target Rarity",
+	Options = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythical", "Secret"},
+	CurrentOption = { TargetRarity },
+	MultipleOptions = false,
+	Flag = "TargetRarity",
+	Callback = function(Option)
+		TargetRarity = Option[1]
 		config.targetRarity = TargetRarity
 		saveConfig(config)
 	end,
 })
 
-LeftGroupBox:AddToggle("AutoServerHop", {
-	Text = "Auto Server Hop",
-	Default = AutoServerHop,
-	Tooltip = "Automatically switch servers when target rarity not found",
+local AutoHopToggle = MainTab:CreateToggle({
+	Name = "Auto Server Hop",
+	CurrentValue = AutoServerHop,
+	Flag = "AutoServerHop",
 	Callback = function(Value)
 		AutoServerHop = Value
 		config.autoServerHop = Value
@@ -173,10 +121,10 @@ LeftGroupBox:AddToggle("AutoServerHop", {
 	end,
 })
 
-LeftGroupBox:AddToggle("ESPEnabled", {
-	Text = "Enable ESP",
-	Default = ESPEnabled,
-	Tooltip = "Highlight target rarity brainrots",
+local ESPToggle = MainTab:CreateToggle({
+	Name = "Enable ESP",
+	CurrentValue = ESPEnabled,
+	Flag = "ESPEnabled",
 	Callback = function(Value)
 		ESPEnabled = Value
 		config.espEnabled = Value
@@ -187,10 +135,10 @@ LeftGroupBox:AddToggle("ESPEnabled", {
 	end,
 })
 
-LeftGroupBox:AddToggle("AutoScanOnJoin", {
-	Text = "Auto Scan on Join",
-	Default = AutoScanOnJoin,
-	Tooltip = "Automatically scan for rarities when joining a server",
+local AutoScanToggle = MainTab:CreateToggle({
+	Name = "Auto Scan on Join",
+	CurrentValue = AutoScanOnJoin,
+	Flag = "AutoScanOnJoin",
 	Callback = function(Value)
 		AutoScanOnJoin = Value
 		config.autoScanOnJoin = Value
@@ -198,223 +146,68 @@ LeftGroupBox:AddToggle("AutoScanOnJoin", {
 	end,
 })
 
-local RightGroupBox = Tabs.Main:AddRightGroupbox("Actions")
+local ActionsSection = MainTab:CreateSection("Actions")
 
-RightGroupBox:AddButton({
-	Text = "Instant Scan",
-	Func = function()
+local ScanButton = MainTab:CreateButton({
+	Name = "Scan for Rarities",
+	Callback = function()
 		if not isScanning then
 			scanForRarities()
-		else
-			Library:Notify("Already scanning! Please wait...", 1)
 		end
 	end,
-	DoubleClick = false,
-	Tooltip = "Instantly scan current server for target rarity",
 })
 
-RightGroupBox:AddButton({
-	Text = "Force Different Server",
-	Func = function()
-		Library:Notify("Forcing server hop with history check...", 1)
-		local currentServerId = game.JobId
-		local visitedCount = 0
-		for _ in pairs(visitedServers) do
-			visitedCount = visitedCount + 1
-		end
-		Library:Notify("Current: " .. string.sub(currentServerId, 1, 8) .. " | Visited: " .. tostring(visitedCount), 2)
+local ServerHopButton = MainTab:CreateButton({
+	Name = "Server Hop Now",
+	Callback = function()
 		joinDifferentServer()
 	end,
-	DoubleClick = false,
-	Tooltip = "Force join a different server with debug info",
 })
 
-RightGroupBox:AddButton({
-	Text = "Speed Hop Mode",
-	Func = function()
-		Library:Notify("Speed hopping through servers...", 1)
-		spawnNow(function()
-			for i = 1, 5 do
-				if not isScanning then
-					scanForRarities()
-					sleep(0.1)
-					if not AutoServerHop then
-						break
-					end
-					joinDifferentServer()
-					sleep(2)
-				else
-					break
-				end
-			end
-		end)
-	end,
-	DoubleClick = false,
-	Tooltip = "Rapidly scan multiple servers",
-})
-
-RightGroupBox:AddButton({
-	Text = "Clear ESP",
-	Func = function()
+local ClearESPButton = MainTab:CreateButton({
+	Name = "Clear ESP",
+	Callback = function()
 		clearHighlights()
-		Library:Notify("ESP Cleared!", 1)
-	end,
-	DoubleClick = false,
-	Tooltip = "Remove all ESP highlights",
-})
-
-RightGroupBox:AddButton({
-	Text = "Clear Server History",
-	Func = function()
-		visitedServers = {}
-		saveVisitedServers()
-		local currentServerId = game.JobId
-		if currentServerId and currentServerId ~= "" then
-			visitedServers[currentServerId] = os.time()
-			saveVisitedServers()
-		end
-		Library:Notify("Server history cleared! Current server re-added.", 2)
-	end,
-	DoubleClick = false,
-	Tooltip = "Clear visited servers list (keeps current server)",
-})
-
-local InfoGroupBox = Tabs.Main:AddRightGroupbox("Information")
-
-InfoGroupBox:AddLabel("Secret Finder")
-
-local SettingsGroupBox = Tabs.Settings:AddLeftGroupbox("UI Settings")
-
-SettingsGroupBox:AddLabel("UI Theme"):AddColorPicker("MenuColor", {
-	Default = Color3.new(0, 1, 0),
-	Title = "Menu Color",
-	Transparency = 0,
-	Callback = function(Value) end,
-})
-
-SettingsGroupBox:AddToggle("KeybindMenuOpen", {
-	Default = false,
-	Text = "Open Keybind Menu",
-	Callback = function(Value)
-		Library.KeybindFrame.Visible = Value
 	end,
 })
 
-SettingsGroupBox:AddButton({
-	Text = "Unload Script",
-	Func = function()
-		Library:Unload()
-	end,
-	DoubleClick = true,
-	Tooltip = "Double-click to unload the script",
-})
 
 function clearHighlights()
-	for _, item in pairs(highlights) do
-		if item then
-			if typeof(item) == "Instance" and item.ClassName == "Tween" then
-				item:Cancel()
-				item:Destroy()
-			elseif typeof(item) == "Instance" and item.Parent then
-				item:Destroy()
-			elseif item.Destroy then
-				item:Destroy()
-			end
+	for _, highlight in pairs(highlights) do
+		if highlight and highlight.Parent then
+			highlight:Destroy()
 		end
 	end
 	highlights = {}
 end
 
 function joinDifferentServer()
-	Library:Notify("Server Hopping - Finding new server...", 1)
+	local success, result = pcall(function()
+		local servers = HttpService:JSONDecode(
+			game:HttpGet(
+				"https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+			)
+		)
 
-	spawnNow(function()
-		local success, result = pcall(function()
-			local currentServerId = game.JobId
-
-
-			local serverLists = {
-				"https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100",
-				"https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Desc&limit=100",
-				"https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Random&limit=100",
-			}
-
-			local allServers = {}
-
-			for _, url in ipairs(serverLists) do
-				local ok, response = pcall(function()
-					return HttpService:JSONDecode(game:HttpGet(url))
-				end)
-
-				if ok and response and response.data then
-					for _, server in ipairs(response.data) do
-						if server.id ~= currentServerId and server.playing < server.maxPlayers then
-						
-							local exists = false
-							for _, existing in ipairs(allServers) do
-								if existing.id == server.id then
-									exists = true
-									break
-								end
-							end
-							if not exists then
-								table.insert(allServers, server)
-							end
-						end
-					end
-				end
-				sleep(0.1) 
-			end
-
-			if #allServers == 0 then
-
-				Library:Notify("Using fallback teleport method...", 1)
-				TeleportService:Teleport(game.PlaceId, Players.LocalPlayer)
+		for _, server in pairs(servers.data) do
+			if server.id ~= game.JobId and server.playing < server.maxPlayers then
+				TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id, Players.LocalPlayer)
 				return true
 			end
-
-			local unvisitedServers = {}
-			local visitedServers_available = {}
-
-			for _, server in ipairs(allServers) do
-				if not visitedServers[server.id] then
-					table.insert(unvisitedServers, server)
-				else
-					table.insert(visitedServers_available, server)
-				end
-			end
-
-			local targetServer = nil
-			if #unvisitedServers > 0 then
-	
-				table.sort(unvisitedServers, function(a, b)
-					return (a.playing or 0) < (b.playing or 0)
-				end)
-				targetServer = unvisitedServers[1]
-				Library:Notify("Joining unvisited server (ID: " .. string.sub(targetServer.id, 1, 8) .. ")", 2)
-			elseif #visitedServers_available > 0 then
-
-				targetServer = visitedServers_available[math.random(1, #visitedServers_available)]
-				Library:Notify("Rejoining previous server (ID: " .. string.sub(targetServer.id, 1, 8) .. ")", 2)
-			end
-
-			if targetServer then
-
-				visitedServers[targetServer.id] = os.time()
-				saveVisitedServers()
-
-				TeleportService:TeleportToPlaceInstance(game.PlaceId, targetServer.id, Players.LocalPlayer)
-				return true
-			end
-
-			return false
-		end)
-
-		if not success or not result then
-			Library:Notify("Retrying with basic teleport...", 1)
-			TeleportService:Teleport(game.PlaceId, Players.LocalPlayer)
 		end
+		return false
 	end)
+
+	if not success or not result then
+		TeleportService:Teleport(game.PlaceId, Players.LocalPlayer)
+	end
+
+	Rayfield:Notify({
+		Title = "Server Hopping",
+		Content = "Switching to a different server...",
+		Duration = 3,
+		Image = 4483362458,
+	})
 end
 
 function scanForRarities()
@@ -430,7 +223,12 @@ function scanForRarities()
 
 	clearHighlights()
 
-	Library:Notify("Fast scanning for " .. TargetRarity .. " rarity...", 1)
+	Rayfield:Notify({
+		Title = "Scanning",
+		Content = "Looking for " .. TargetRarity .. " rarity Brainrots...",
+		Duration = 2,
+		Image = 4483362458,
+	})
 
 	for _, plot in ipairs(plots) do
 		local animalPodiums = plot:FindFirstChild("AnimalPodiums")
@@ -463,49 +261,11 @@ function scanForRarities()
 											if bikeModel and bikeModel:IsA("Model") then
 												local highlight = Instance.new("Highlight")
 												highlight.Name = "RarityESP"
-												highlight.FillColor = Color3.fromRGB(0, 255, 0)
-												highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-												highlight.FillTransparency = 0.3
-												highlight.OutlineTransparency = 0
+												highlight.FillColor = Color3.fromRGB(255, 255, 0)
+												highlight.OutlineColor = Color3.fromRGB(0, 0, 0)
 												highlight.Adornee = bikeModel
 												highlight.Parent = bikeModel
 												table.insert(highlights, highlight)
-
-												local billboardGui = Instance.new("BillboardGui")
-												billboardGui.Name = "RarityESPText"
-												billboardGui.Size = UDim2.new(0, 200, 0, 100)
-												billboardGui.StudsOffset = Vector3.new(0, 5, 0)
-												billboardGui.Adornee = bikeModel
-												billboardGui.Parent = bikeModel
-
-												local textLabel = Instance.new("TextLabel")
-												textLabel.Size = UDim2.new(1, 0, 1, 0)
-												textLabel.BackgroundTransparency = 0.2
-												textLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-												textLabel.BorderSizePixel = 0
-												textLabel.Text = rarityText .. " FOUND!"
-												textLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
-												textLabel.TextScaled = true
-												textLabel.TextStrokeTransparency = 0
-												textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-												textLabel.Font = Enum.Font.GothamBold
-												textLabel.Parent = billboardGui
-
-												local tween = game:GetService("TweenService"):Create(
-													textLabel,
-													TweenInfo.new(
-														0.8,
-														Enum.EasingStyle.Sine,
-														Enum.EasingDirection.InOut,
-														-1,
-														true
-													),
-													{ TextTransparency = 0.3 }
-												)
-												tween:Play()
-
-												table.insert(highlights, billboardGui)
-												table.insert(highlights, tween)
 											end
 										end
 									end
@@ -518,25 +278,42 @@ function scanForRarities()
 		end
 	end
 
-	local summaryText = "Results: "
+	local summaryText = "Scan Results:\n"
 	if foundAnyRarity then
 		for rarityName, count in pairs(raritiesFound) do
-			summaryText = summaryText .. rarityName .. "(" .. count .. ") "
+			summaryText = summaryText .. rarityName .. ": " .. count .. "\n"
 		end
 	else
 		summaryText = summaryText .. "No Brainrots found"
 	end
 
 	if foundTargetRarity then
-		Library:Notify("🎉 TARGET FOUND! Found " .. TargetRarity .. " rarity Brainrots!", 5)
+		Rayfield:Notify({
+			Title = "🎉 TARGET FOUND!",
+			Content = "Found " .. TargetRarity .. " rarity Brainrots!",
+			Duration = 10,
+			Image = 4483362458,
+		})
 	elseif foundAnyRarity then
-		Library:Notify("Target not found - " .. summaryText, 2)
+		Rayfield:Notify({
+			Title = "Target Not Found",
+			Content = summaryText,
+			Duration = 5,
+			Image = 4483362458,
+		})
 		if AutoServerHop then
+			wait(2)
 			joinDifferentServer()
 		end
 	else
-		Library:Notify("No Brainrots found - Hopping servers...", 2)
+		Rayfield:Notify({
+			Title = "No Brainrots Found",
+			Content = "No Brainrots detected in this server",
+			Duration = 5,
+			Image = 4483362458,
+		})
 		if AutoServerHop then
+			wait(2)
 			joinDifferentServer()
 		end
 	end
@@ -544,23 +321,7 @@ function scanForRarities()
 	isScanning = false
 end
 
-ThemeManager:SetLibrary(Library)
-SaveManager:SetLibrary(Library)
-
-ThemeManager:SetFolder("LinoriaLibSettings")
-ThemeManager:ApplyToTab(Tabs.Settings)
-
-SaveManager:SetFolder("LinoriaLibSettings/BrainrotRarity")
-
-SaveManager:BuildConfigSection(Tabs.Settings)
-
-SaveManager:SetIgnoreIndexes({})
-
-SaveManager:LoadAutoloadConfig()
-
 if AutoScanOnJoin then
-	spawnNow(function()
-		sleep(0.5)
-		scanForRarities()
-	end)
+	wait(3)
+	scanForRarities()
 end
