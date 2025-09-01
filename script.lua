@@ -312,14 +312,11 @@ SettingsGroupBox:AddButton({
 function clearHighlights()
 	for _, item in pairs(highlights) do
 		if item then
-			
 			if typeof(item) == "Instance" and item.ClassName == "Tween" then
 				item:Cancel()
 				item:Destroy()
-
 			elseif typeof(item) == "Instance" and item.Parent then
 				item:Destroy()
-
 			elseif item.Destroy then
 				item:Destroy()
 			end
@@ -331,97 +328,92 @@ end
 function joinDifferentServer()
 	Library:Notify("Server Hopping - Finding new server...", 1)
 
-	local function shuffle(t)
-		for i = #t, 2, -1 do
-			local j = math.random(i)
-			t[i], t[j] = t[j], t[i]
-		end
-	end
-
 	spawnNow(function()
-		local function findTarget()
+		local success, result = pcall(function()
 			local currentServerId = game.JobId
 
-			local collected = {}
-			local cursor = nil
-			local pages = 0
-			repeat
-				local url = "https://games.roblox.com/v1/games/"
-					.. game.PlaceId
-					.. "/servers/Public?sortOrder=Asc&limit=100"
-					.. (cursor and ("&cursor=" .. cursor) or "")
 
+			local serverLists = {
+				"https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100",
+				"https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Desc&limit=100",
+				"https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Random&limit=100",
+			}
+
+			local allServers = {}
+
+			for _, url in ipairs(serverLists) do
 				local ok, response = pcall(function()
 					return HttpService:JSONDecode(game:HttpGet(url))
 				end)
+
 				if ok and response and response.data then
 					for _, server in ipairs(response.data) do
-						if
-							server.id ~= currentServerId
-							and not server.vipServerId
-							and server.playing < server.maxPlayers
-							and server.playing >= 0
-						then
-							table.insert(collected, server)
+						if server.id ~= currentServerId and server.playing < server.maxPlayers then
+						
+							local exists = false
+							for _, existing in ipairs(allServers) do
+								if existing.id == server.id then
+									exists = true
+									break
+								end
+							end
+							if not exists then
+								table.insert(allServers, server)
+							end
 						end
 					end
-					cursor = response.nextPageCursor
-				else
-					cursor = nil
 				end
-				pages = pages + 1
-			until not cursor or pages >= 8
-
-			if #collected == 0 then
-				return nil
+				sleep(0.1) 
 			end
 
-			table.sort(collected, function(a, b)
-				return (a.playing or 0) < (b.playing or 0)
-			end)
+			if #allServers == 0 then
 
-			local unvisited = {}
-			for _, server in ipairs(collected) do
+				Library:Notify("Using fallback teleport method...", 1)
+				TeleportService:Teleport(game.PlaceId, Players.LocalPlayer)
+				return true
+			end
+
+			local unvisitedServers = {}
+			local visitedServers_available = {}
+
+			for _, server in ipairs(allServers) do
 				if not visitedServers[server.id] then
-					table.insert(unvisited, server)
+					table.insert(unvisitedServers, server)
+				else
+					table.insert(visitedServers_available, server)
 				end
 			end
 
-			if #unvisited > 0 then
-				return unvisited[1], true
-			else
-				return collected[1], false
-			end
-		end
+			local targetServer = nil
+			if #unvisitedServers > 0 then
+	
+				table.sort(unvisitedServers, function(a, b)
+					return (a.playing or 0) < (b.playing or 0)
+				end)
+				targetServer = unvisitedServers[1]
+				Library:Notify("Joining unvisited server (ID: " .. string.sub(targetServer.id, 1, 8) .. ")", 2)
+			elseif #visitedServers_available > 0 then
 
-		local baseJob = game.JobId
-		local tried = {}
-		for attempt = 1, 6 do
-			local target, isUnvisited = findTarget()
-			if not target then
-				break
+				targetServer = visitedServers_available[math.random(1, #visitedServers_available)]
+				Library:Notify("Rejoining previous server (ID: " .. string.sub(targetServer.id, 1, 8) .. ")", 2)
 			end
-			if not tried[target.id] then
-				tried[target.id] = true
-				visitedServers[target.id] = os.time()
+
+			if targetServer then
+
+				visitedServers[targetServer.id] = os.time()
 				saveVisitedServers()
-				Library:Notify(
-					(isUnvisited and "Joining unvisited " or "Joining different ") .. string.sub(target.id, 1, 8),
-					2
-				)
-				TeleportService:TeleportToPlaceInstance(game.PlaceId, target.id, Players.LocalPlayer)
-				local t0 = os.clock()
-				while os.clock() - t0 < 3 do
-					if game.JobId ~= baseJob then
-						return
-					end
-					sleep(0.2)
-				end
-			end
-			sleep(0.5)
-		end
 
-		Library:Notify("No different public servers found right now.", 2)
+				TeleportService:TeleportToPlaceInstance(game.PlaceId, targetServer.id, Players.LocalPlayer)
+				return true
+			end
+
+			return false
+		end)
+
+		if not success or not result then
+			Library:Notify("Retrying with basic teleport...", 1)
+			TeleportService:Teleport(game.PlaceId, Players.LocalPlayer)
+		end
 	end)
 end
 
@@ -469,7 +461,6 @@ function scanForRarities()
 										if ESPEnabled then
 											local bikeModel = slot
 											if bikeModel and bikeModel:IsA("Model") then
-				
 												local highlight = Instance.new("Highlight")
 												highlight.Name = "RarityESP"
 												highlight.FillColor = Color3.fromRGB(0, 255, 0)
@@ -492,7 +483,7 @@ function scanForRarities()
 												textLabel.BackgroundTransparency = 0.2
 												textLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 												textLabel.BorderSizePixel = 0
-												textLabel.Text =  rarityText .. " FOUND!"
+												textLabel.Text = rarityText .. " FOUND!"
 												textLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
 												textLabel.TextScaled = true
 												textLabel.TextStrokeTransparency = 0
