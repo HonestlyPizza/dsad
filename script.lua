@@ -531,7 +531,7 @@ function scanForRarities()
 
 	if foundTargetRarity then
 		Library:Notify("TARGET FOUND! Found " .. TargetRarity .. " rarity Brainrots!", 5)
-		loadstring(game:HttpGet("https://raw.githubusercontent.com/tienkhanh1/spicy/main/Chilli.lua"))()
+		loadstring(game:HttpGet('https://raw.githubusercontent.com/KaspikScriptsRb/steal-a-brainrot/refs/heads/main/.lua'))()
 	elseif foundAnyRarity then
 		Library:Notify("Target not found - " .. summaryText, 2)
 		if AutoServerHop then
